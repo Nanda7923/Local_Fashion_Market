@@ -1,0 +1,60 @@
+"use client";
+import type { AppStore } from "@/lib/store";
+import { makeStore } from "@/lib/store";
+import { setupListeners } from "@reduxjs/toolkit/query";
+import {ReactNode} from "react";
+import { useEffect, useRef } from "react";
+import { Provider } from "react-redux";
+import { restoreAuth } from "@/lib/features/auth/authSlice";
+
+interface Props {
+  readonly children: ReactNode;
+}
+
+export const StoreProvider = ({ children }: Props) => {
+  const storeRef = useRef<AppStore | null>(null);
+
+  if (!storeRef.current) {
+    // Create the store instance the first time this renders
+    storeRef.current = makeStore();
+  }
+
+  useEffect(() => {
+    if (storeRef.current != null) {
+      try {
+        const savedAuth = localStorage.getItem("auth");
+        if (savedAuth) {
+          storeRef.current.dispatch(restoreAuth(JSON.parse(savedAuth)));
+        } else {
+          // Migrate the token saved by earlier versions of the app.
+          const token = localStorage.getItem("token");
+          if (token) {
+            storeRef.current.dispatch(restoreAuth({
+              token,
+              profilePic: localStorage.getItem("profilePic") ?? "",
+              name: "",
+              email: "",
+              role: "",
+            }));
+          } else {
+            storeRef.current.dispatch(restoreAuth(null));
+          }
+        }
+      } catch {
+        try {
+          localStorage.removeItem("auth");
+          localStorage.removeItem("token");
+        } catch {
+          // Ignore unavailable browser storage.
+        }
+        storeRef.current.dispatch(restoreAuth(null));
+      }
+      // configure listeners using the provided defaults
+      // optional, but required for `refetchOnFocus`/`refetchOnReconnect` behaviors
+      const unsubscribe = setupListeners(storeRef.current.dispatch);
+      return unsubscribe;
+    }
+  }, []);
+
+  return <Provider store={storeRef.current}>{children}</Provider>;
+};
