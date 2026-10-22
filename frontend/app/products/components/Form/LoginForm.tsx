@@ -1,14 +1,14 @@
 "use client";
 
-import {useForm} from "react-hook-form";
-import {zodResolver} from "@hookform/resolvers/zod";
-import {LoginData, LoginSchema} from "@/app/schema/authSchema";
-import {Alert, Button, Card, Checkbox, CircularProgress, TextField, Typography} from "@mui/material";
-import {Close, Visibility, VisibilityOff} from '@mui/icons-material';
-import React, {useState} from "react";
-import {login, selectAuthStatus} from "@/lib/features/auth/authSlice";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { LoginData, LoginSchema } from "@/app/schema/authSchema";
+import { Alert, Button, Card, Checkbox, CircularProgress, TextField, Typography } from "@mui/material";
+import { Close, Visibility, VisibilityOff } from '@mui/icons-material';
+import React, { useState } from "react";
+import { login, loginWithGoogle, selectAuthStatus } from "@/lib/features/auth/authSlice";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
-
+import { signInWithGoogle } from "@/lib/firebase/googleAuth";
 
 export interface AuthProps {
     showAuthForm : boolean;
@@ -19,26 +19,59 @@ export interface AuthProps {
 export default function LoginForm({showAuthForm , setShowAuthForm, setAuthMode}: AuthProps) {
     const [showPassword, setShowPassword] = useState(false);
     const [serverError, setServerError] = useState<string | null>(null);
+    const [isGoogleLoading, setIsGoogleLoading] = useState<boolean>(false);
     const dispatch = useAppDispatch();
     const authStatus = useAppSelector(selectAuthStatus);
     const isSubmitting = authStatus === "loading";
 
     const {
-        register,
+        control,
         handleSubmit,
+        reset,
         formState: { errors },
     } = useForm<LoginData>({
-        resolver: zodResolver(LoginSchema)
+        resolver: zodResolver(LoginSchema),
+        defaultValues: {
+            email: "",
+            password: "",
+        },
     });
 
     const onSubmit = async (data : LoginData ) => {
         try {
             setServerError(null);
             await dispatch(login(data)).unwrap();
+            reset({ email: "", password: "" });
             setShowAuthForm(false);
         } catch (error: unknown) {
             const message = typeof error === "string" ? error : (error as { message?: string })?.message || "Login failed";
             setServerError(message);
+        }
+    };
+
+    const handleGoogleSignIn = async () => {
+        if (isSubmitting || isGoogleLoading) return;
+        setServerError(null);
+        setIsGoogleLoading(true);
+        try {
+            const { idToken } = await signInWithGoogle();
+            const result = await dispatch(loginWithGoogle(idToken));
+            if (loginWithGoogle.fulfilled.match(result)) {
+                reset({ email: "", password: "" });
+                setShowAuthForm(false);
+            } else {
+                const errorMsg = (result.payload as string) || "Google sign-in failed";
+                setServerError(errorMsg);
+            }
+        } catch (error: unknown) {
+            const firebaseError = error as { code?: string; message?: string };
+            if (firebaseError?.code === "auth/popup-closed-by-user" || firebaseError?.code === "auth/cancelled-popup-request") {
+                return;
+            }
+            const errorMsg = firebaseError?.message || "Google sign-in failed";
+            setServerError(errorMsg);
+        } finally {
+            setIsGoogleLoading(false);
         }
     };
 
@@ -92,24 +125,40 @@ export default function LoginForm({showAuthForm , setShowAuthForm, setAuthMode}:
                 )}
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                     <div className="relative">
-                        <TextField label="Email"
-                                   variant="outlined"
-                                   disabled={isSubmitting}
-                                   {...register("email")}
+                        <Controller
+                            name="email"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="Email"
+                                    variant="outlined"
+                                    disabled={isSubmitting || isGoogleLoading}
                                     error={!!errors.email}
                                     helperText={errors?.email?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"/>
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                     </div>
 
                     <div className="relative">
-                        <TextField label="password"
-                                   type={showPassword ? "text" : "password"}
-                                   variant="outlined"
-                                   disabled={isSubmitting}
-                                   {...register("password")}
-                                   error={!!errors.password}
-                                   helperText={errors?.password?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"/>
+                        <Controller
+                            name="password"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="password"
+                                    type={showPassword ? "text" : "password"}
+                                    variant="outlined"
+                                    disabled={isSubmitting || isGoogleLoading}
+                                    error={!!errors.password}
+                                    helperText={errors?.password?.message}
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                         <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-3 text-gray-400 hover:text-gray-800 z-10 cursor-pointer">
                             {showPassword ? <VisibilityOff /> : <Visibility />}
                         </button>
@@ -118,7 +167,7 @@ export default function LoginForm({showAuthForm , setShowAuthForm, setAuthMode}:
                     <div className="flex items-center justify-between pt-1 text-xs sm:text-sm">
                         <label className="flex gap-2 items-center space-x-2 text-gray-600 select-none cursor-pointer">
                             <Checkbox
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || isGoogleLoading}
                                 className="!h-4 !w-4 rounded-none !border-gray-300 !text-black !focus:ring-0 !accent-black cursor-pointer"
                             />
                             <span>Remember me</span>
@@ -134,7 +183,7 @@ export default function LoginForm({showAuthForm , setShowAuthForm, setAuthMode}:
                     <div className="pt-2">
                         <Button
                             type="submit"
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || isGoogleLoading}
                             className="w-full !bg-[#262626] py-3 text-center text-sm font-medium !text-white !transition-colors !duration-200 hover:!bg-black !uppercase !tracking-wider disabled:!opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                         >
                             {isSubmitting ? (
@@ -146,13 +195,42 @@ export default function LoginForm({showAuthForm , setShowAuthForm, setAuthMode}:
                                 "Log in"
                             )}
                         </Button>
+
+                        <div className="flex w-full gap-3 my-3 items-center">
+                            <hr className="w-full text-gray-500"/>
+                            <span className="text-sm text-gray-700">OR</span>
+                            <hr className="w-full text-gray-500"/>
+                        </div>
+
+                        <Button
+                            type="button"
+                            disabled={isSubmitting || isGoogleLoading}
+                            onClick={handleGoogleSignIn}
+                            className="w-full flex items-center justify-center gap-3 !bg-transparent py-3 text-center text-sm !border !border-gray-700 font-medium !text-black !transition-colors !duration-100 hover:!bg-gray-100 !tracking-wider cursor-pointer disabled:!opacity-50"
+                        >
+                            {isGoogleLoading ? (
+                                <>
+                                    <CircularProgress size={16} className="!text-black" />
+                                    <span>Connecting with Google...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <img
+                                        src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                                        alt="Google"
+                                        className="w-5 h-5"
+                                    />
+                                    Continue with Google
+                                </>
+                            )}
+                        </Button>
                     </div>
 
                     <div className="pt-4 text-center text-sm text-gray-600">
                         <span>Don't have an account?</span>
                         <Button
                             type="button"
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || isGoogleLoading}
                             onClick={handleSwitchToRegister}
                             className="ms-1 font-semibold text-gray-800 hover:text-black hover:underline transition-colors cursor-pointer"
                         >

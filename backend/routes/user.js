@@ -5,6 +5,7 @@ const {verify,checkRole} = require('./../middlewares/auth');
 
 router.post('/register',User.registerUser);
 router.post('/login',User.loginUser);
+router.post('/google-login',User.googleLoginUser);
 
 router.get('/',verify,checkRole("Admin"),User.getAllUsers);
 router.get('/banned',verify,checkRole("Admin"),User.getUserByBanned);

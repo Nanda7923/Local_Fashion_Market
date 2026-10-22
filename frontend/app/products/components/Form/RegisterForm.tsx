@@ -1,5 +1,5 @@
 "use client";
-import {useForm} from "react-hook-form";
+import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import { RegisterFormData, RegisterSchema} from "@/app/schema/authSchema";
 import {Alert, Button, Card, CircularProgress, TextField, Typography} from "@mui/material";
@@ -7,7 +7,8 @@ import {Close, Visibility, VisibilityOff} from '@mui/icons-material';
 import {useState, useEffect} from "react";
 import {AuthProps} from "@/app/products/components/Form/LoginForm";
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
-import {registerUser, selectAuthStatus} from "@/lib/features/auth/authSlice";
+import {registerUser, loginWithGoogle, selectAuthStatus} from "@/lib/features/auth/authSlice";
+import {signInWithGoogle} from "@/lib/firebase/googleAuth";
 
 export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMode}: AuthProps) {
     const [showPassword, setShowPassword] = useState(false);
@@ -15,17 +16,26 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
     const [uploading, setUploading] = useState<boolean>(false);
     const [uploadedUrl, setUploadedUrl] = useState<string>('');
     const [serverError, setServerError] = useState<string | null>(null);
+    const [isGoogleLoading, setIsGoogleLoading] = useState<boolean>(false);
     const dispatch = useAppDispatch();
     const authStatus = useAppSelector(selectAuthStatus);
     const isSubmitting = authStatus === "loading";
 
     const {
-        register,
+        control,
         handleSubmit,
         setValue,
+        reset,
         formState: {errors},
     } = useForm<RegisterFormData>({
-        resolver: zodResolver(RegisterSchema)
+        resolver: zodResolver(RegisterSchema),
+        defaultValues: {
+            name: "",
+            email: "",
+            password: "",
+            confirmPassword: "",
+            profilePic: "",
+        },
     });
 
     const onSubmit = async (data: RegisterFormData) => {
@@ -33,10 +43,51 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
         const { confirmPassword, ...registerPayload } = data;
         const result = await dispatch(registerUser(registerPayload));
         if (registerUser.fulfilled.match(result)) {
+            reset({
+                name: "",
+                email: "",
+                password: "",
+                confirmPassword: "",
+                profilePic: "",
+            });
+            setUploadedUrl('');
             setShowAuthForm(false);
         } else {
             const errorMsg = (result.payload as string) || "Registration failed";
             setServerError(errorMsg);
+        }
+    };
+
+    const handleGoogleSignIn = async () => {
+        if (isSubmitting || uploading || isGoogleLoading) return;
+        setServerError(null);
+        setIsGoogleLoading(true);
+        try {
+            const { idToken } = await signInWithGoogle();
+            const result = await dispatch(loginWithGoogle(idToken));
+            if (loginWithGoogle.fulfilled.match(result)) {
+                reset({
+                    name: "",
+                    email: "",
+                    password: "",
+                    confirmPassword: "",
+                    profilePic: "",
+                });
+                setUploadedUrl('');
+                setShowAuthForm(false);
+            } else {
+                const errorMsg = (result.payload as string) || "Google sign-in failed";
+                setServerError(errorMsg);
+            }
+        } catch (error: unknown) {
+            const firebaseError = error as { code?: string; message?: string };
+            if (firebaseError?.code === "auth/popup-closed-by-user" || firebaseError?.code === "auth/cancelled-popup-request") {
+                return;
+            }
+            const errorMsg = firebaseError?.message || "Google sign-in failed";
+            setServerError(errorMsg);
+        } finally {
+            setIsGoogleLoading(false);
         }
     };
 
@@ -135,14 +186,14 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
                                 accept="image/*"
                                 id="avatar-upload"
                                 className="hidden"
-                                disabled={uploading || isSubmitting}
+                                disabled={uploading || isSubmitting || isGoogleLoading}
                                 onChange={profileChangeHandler}
                             />
 
                             <label
                                 htmlFor="avatar-upload"
                                 className={`absolute inset-0 w-full h-full rounded-full flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-all duration-300 border-2 border-gray-200 hover:border-gray-400 bg-gray-100 shadow-sm
-                                ${uploading || isSubmitting ? 'opacity-70 pointer-events-none' : ''}`}
+                                ${uploading || isSubmitting || isGoogleLoading ? 'opacity-70 pointer-events-none' : ''}`}
                             >
 
                                 {uploadedUrl ? (
@@ -178,50 +229,81 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
                         </div>
                     </div>
 
-
                     <div className="relative">
-                        <TextField label="UserName"
-                                   variant="outlined"
-                                   disabled={isSubmitting || uploading}
-                                   {...register("name")}
-                                   error={!!errors.name}
-                                   helperText={errors?.name?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"/>
+                        <Controller
+                            name="name"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="UserName"
+                                    variant="outlined"
+                                    disabled={isSubmitting || uploading || isGoogleLoading}
+                                    error={!!errors.name}
+                                    helperText={errors?.name?.message}
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                     </div>
 
                     <div className="relative">
-                        <TextField label="Email"
-                                   variant="outlined"
-                                   disabled={isSubmitting || uploading}
-                                   {...register("email")}
-                                   error={!!errors.email}
-                                   helperText={errors?.email?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"/>
+                        <Controller
+                            name="email"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="Email"
+                                    variant="outlined"
+                                    disabled={isSubmitting || uploading || isGoogleLoading}
+                                    error={!!errors.email}
+                                    helperText={errors?.email?.message}
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                     </div>
 
                     <div className="relative">
-                        <TextField label="Password"
-                                   type={showPassword ? "text" : "password"}
-                                   variant="outlined"
-                                   disabled={isSubmitting || uploading}
-                                   {...register("password")}
-                                   error={!!errors.password}
-                                   helperText={errors?.password?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none  placeholder-gray-500"/>
+                        <Controller
+                            name="password"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="Password"
+                                    type={showPassword ? "text" : "password"}
+                                    variant="outlined"
+                                    disabled={isSubmitting || uploading || isGoogleLoading}
+                                    error={!!errors.password}
+                                    helperText={errors?.password?.message}
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                         <button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-3 text-gray-400 hover:text-gray-800 z-10 cursor-pointer">
                             {showPassword ? <VisibilityOff /> : <Visibility />}
                         </button>
                     </div>
 
                     <div className="relative">
-                        <TextField label="Confirm Password"
-                                   type={showConfirmPassword ? "text" : "password"}
-                                   variant="outlined"
-                                   disabled={isSubmitting || uploading}
-                                   {...register("confirmPassword")}
-                                   error={!!errors.confirmPassword}
-                                   helperText={errors?.confirmPassword?.message}
-                                   className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"/>
+                        <Controller
+                            name="confirmPassword"
+                            control={control}
+                            render={({ field }) => (
+                                <TextField
+                                    {...field}
+                                    label="Confirm Password"
+                                    type={showConfirmPassword ? "text" : "password"}
+                                    variant="outlined"
+                                    disabled={isSubmitting || uploading || isGoogleLoading}
+                                    error={!!errors.confirmPassword}
+                                    helperText={errors?.confirmPassword?.message}
+                                    className="w-full border border-gray-300 pr-12 pl-4 py-3 text-sm focus:border-black focus:outline-none placeholder-gray-500"
+                                />
+                            )}
+                        />
                         <button type="button" aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-4 top-3 text-gray-400 hover:text-gray-800 z-10 cursor-pointer">
                             {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
                         </button>
@@ -230,7 +312,7 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
                     <div className="pt-2">
                         <Button
                             type="submit"
-                            disabled={isSubmitting || uploading}
+                            disabled={isSubmitting || uploading || isGoogleLoading}
                             className="w-full !bg-[#262626] py-3 text-center text-sm font-medium !text-white !transition-colors !duration-200 hover:!bg-black !uppercase !tracking-wider disabled:!opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                         >
                             {isSubmitting ? (
@@ -250,15 +332,25 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
 
                         <Button
                             type="button"
-                            disabled={isSubmitting || uploading}
-                            className="w-full flex items-center gap-3 !bg-transparent py-3 text-center text-sm !border !border-gray-700 font-medium !text-black !transition-colors !duration-100 hover:!bg-gray-100 !tracking-wider cursor-pointer"
+                            disabled={isSubmitting || uploading || isGoogleLoading}
+                            onClick={handleGoogleSignIn}
+                            className="w-full flex items-center justify-center gap-3 !bg-transparent py-3 text-center text-sm !border !border-gray-700 font-medium !text-black !transition-colors !duration-100 hover:!bg-gray-100 !tracking-wider cursor-pointer disabled:!opacity-50"
                         >
-                            <img
-                                src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-                                alt="Google"
-                                className="w-5 h-5"
-                            />
-                            Continue with Google
+                            {isGoogleLoading ? (
+                                <>
+                                    <CircularProgress size={16} className="!text-black" />
+                                    <span>Connecting with Google...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <img
+                                        src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                                        alt="Google"
+                                        className="w-5 h-5"
+                                    />
+                                    Continue with Google
+                                </>
+                            )}
                         </Button>
 
                     </div>
@@ -267,7 +359,7 @@ export default function RegisterForm({showAuthForm , setShowAuthForm, setAuthMod
                         <span>Have already an account?</span>
                         <Button
                             type="button"
-                            disabled={isSubmitting || uploading}
+                            disabled={isSubmitting || uploading || isGoogleLoading}
                             onClick={handleSwitchToLogin}
                             className="ms-1 font-semibold text-gray-800 hover:text-black hover:underline transition-colors cursor-pointer"
                         >

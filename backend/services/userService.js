@@ -1,6 +1,9 @@
 let Users = require("../models/User");
 let bcrypt = require("bcrypt");
 let jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+require("../middlewares/auth");
+const { getAuth } = require("firebase-admin/auth");
 
 async function getAllUsers(){
 	let users =await Users.find().select('-password').sort({ createdAt: -1 });
@@ -149,6 +152,100 @@ async function unBanUser(userId){
     return user;
 }
 
+async function googleLoginUser(idToken) {
+    let decodedToken;
+    try {
+        decodedToken = await getAuth().verifyIdToken(idToken);
+    } catch (err) {
+        const error = new Error("Invalid or expired Google ID token.");
+        error.statusCode = 401;
+        throw error;
+    }
+
+    const email = typeof decodedToken?.email === "string" ? decodedToken.email.trim().toLowerCase() : "";
+    if (!email) {
+        const error = new Error("Google account does not have a valid email.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!decodedToken.email_verified) {
+        const error = new Error("Google account email is not verified.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    let existingUser = await Users.findOne({ email });
+
+    if (existingUser) {
+        if (existingUser.isBanned) {
+            const error = new Error("Your account has been banned");
+            error.statusCode = 403;
+            throw error;
+        }
+
+        if (!existingUser.profilePic && decodedToken.picture) {
+            existingUser.profilePic = decodedToken.picture;
+            await existingUser.save();
+        }
+
+        let payload = {
+            userId: existingUser._id,
+            role: existingUser.role,
+        };
+        let token = jwt.sign(payload, process.env.TOKEN_SECRET, { expiresIn: "1d" });
+
+        return {
+            token,
+            user: {
+                _id: existingUser._id,
+                name: existingUser.name,
+                email: existingUser.email,
+                role: existingUser.role,
+                profilePic: existingUser.profilePic,
+            }
+        };
+    }
+
+    const randomPassword = crypto.randomBytes(32).toString("hex");
+    const hashedPassword = await hashPassword(randomPassword);
+
+    let rawName = typeof decodedToken.name === "string" && decodedToken.name.trim()
+        ? decodedToken.name.trim()
+        : email.split("@")[0];
+    if (rawName.length > 18) {
+        rawName = rawName.slice(0, 18);
+    }
+
+    let newUser = new Users({
+        name: rawName,
+        email: email,
+        password: hashedPassword,
+        profilePic: decodedToken.picture || null,
+        role: "User",
+        isBanned: false,
+    });
+
+    let savedUser = await newUser.save();
+
+    let payload = {
+        userId: savedUser._id,
+        role: savedUser.role,
+    };
+    let token = jwt.sign(payload, process.env.TOKEN_SECRET, { expiresIn: "1d" });
+
+    return {
+        token,
+        user: {
+            _id: savedUser._id,
+            name: savedUser.name,
+            email: savedUser.email,
+            role: savedUser.role,
+            profilePic: savedUser.profilePic,
+        }
+    };
+}
+
 module.exports = {
     getAllUsers,
     getUserById,
@@ -159,5 +256,6 @@ module.exports = {
     updateUser,
     loginUser,
     banUser,
-    unBanUser
+    unBanUser,
+    googleLoginUser
 }

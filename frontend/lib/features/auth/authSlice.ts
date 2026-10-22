@@ -200,6 +200,64 @@ export const authSlice = createAppSlice({
                 },
             }
         ),
+
+        loginWithGoogle: create.asyncThunk(
+            async (idToken: string, { rejectWithValue }) => {
+                try {
+                    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/google-login`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ idToken }),
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        return rejectWithValue(data.message || "Google login failed");
+                    }
+                    const token = data.data?.token;
+                    const userData = data.data?.user;
+                    if (token && userData) {
+                        persistAuth({
+                            token,
+                            profilePic: userData.profilePic ?? "",
+                            name: userData.name ?? "",
+                            email: userData.email ?? "",
+                            role: userData.role ?? "",
+                        });
+                    }
+                    return data;
+                } catch (e) {
+                    return rejectWithValue("Unable to connect to the server");
+                }
+            },
+            {
+                pending: (state) => {
+                    state.status = "loading";
+                    state.error = null;
+                },
+                fulfilled: (state, action) => {
+                    state.status = "idle";
+                    state.error = null;
+                    state.token = action.payload?.data?.token;
+                    state.profilePic = action.payload?.data?.user?.profilePic ?? "";
+                    state.name = action.payload?.data?.user?.name ?? "";
+                    state.email = action.payload?.data?.user?.email ?? "";
+                    state.role = action.payload?.data?.user?.role ?? "";
+                    state.initialized = true;
+                },
+                rejected: (state, action) => {
+                    state.status = "idle";
+                    state.token = undefined;
+                    state.profilePic = "";
+                    state.name = "";
+                    state.email = "";
+                    state.role = "";
+                    state.initialized = true;
+                    state.error = (action.payload as string) || action.error.message || "Google login failed";
+                },
+            }
+        ),
     }),
     selectors: {
         selectAuth: (state) => state.token,
@@ -213,7 +271,7 @@ export const authSlice = createAppSlice({
     },
 });
 
-export const { login, registerUser, restoreAuth, profileUpdated } = authSlice.actions;
+export const { login, registerUser, loginWithGoogle, restoreAuth, profileUpdated } = authSlice.actions;
 export const logout = () => (dispatch: (action: ReturnType<typeof authSlice.actions.logout>) => void) => {
     try {
         localStorage.removeItem(AUTH_STORAGE_KEY);

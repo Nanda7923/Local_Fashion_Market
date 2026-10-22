@@ -190,6 +190,25 @@ async function unBanUser(req, res){
     }
 }
 
+async function googleLoginUser(req, res){
+    try{
+        const idToken = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
+        if (!idToken) {
+            return res.status(400).json({ message: "ID token is required." });
+        }
+        let result = await userService.googleLoginUser(idToken);
+        res.json({
+            message : "Login Successfully!",
+            data : result,
+        });
+    }catch(err){
+        if (err && err.statusCode) {
+            return res.status(err.statusCode).json({ message: err.message });
+        }
+        return resError(res, err);
+    }
+}
+
 module.exports = {
     getAllUsers,
     getUserById,
@@ -200,4 +219,5 @@ module.exports = {
     loginUser,
     banUser,
     unBanUser,
+    googleLoginUser,
 }
